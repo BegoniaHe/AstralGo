@@ -300,13 +300,16 @@ func (c *QQClient) uploadGuildImage(target message.Source, img io.ReadSeeker) (*
 	}
 ok:
 	_, _ = img.Seek(0, io.SeekStart)
-	i, t, _ := imgsz.DecodeSize(img)
-	width := int32(i.Width)
-	height := int32(i.Height)
-	if target.SourceType != message.SourceGroup {
-		c.warning("warning: decode image error: %v. this image will be displayed by wrong size in pc guild client", err)
+	i, t, err := imgsz.DecodeSize(img)
+	var width = 0
+	var height = 0
+	if err != nil {
+		c.warning("warning: decode image error: %v. this image will be displayed by wrong size!", err)
 		width = 200
 		height = 200
+	} else {
+		width = i.Width
+		height = i.Height
 	}
 	return &message.NewTechImageElement{
 		LegacyGuild: &message.GuildImageElement{
@@ -314,8 +317,8 @@ ok:
 			FilePath:      fmt.Sprintf("%x.jpg", fh),
 			Size:          int32(length),
 			DownloadIndex: rsp.DownloadIndex,
-			Width:         width,
-			Height:        height,
+			Width:         int32(width),
+			Height:        int32(height),
 			ImageType:     int32(ImageExt2Type(t)),
 			Md5:           fh,
 		},
