@@ -702,6 +702,10 @@ func ParseMessageElems(elems []*msg.Elem) []IMessageElement {
 					hash, err := hex.DecodeString(index.Info.FileHash)
 					sha1, err := hex.DecodeString(index.Info.FileSha1)
 					if err == nil {
+						bizType := UnknownBizType
+						if extra.ExtBizInfo != nil && extra.ExtBizInfo.Pic != nil {
+							bizType = ImageBizType(extra.ExtBizInfo.Pic.BizType)
+						}
 						res = append(res, &NewTechImageElement{
 							Size:         index.Info.FileSize,
 							Path:         extra.MsgInfoBody[0].Picture.UrlPath,
@@ -711,7 +715,7 @@ func ParseMessageElems(elems []*msg.Elem) []IMessageElement {
 							Width:        index.Info.Width,
 							Height:       index.Info.Height,
 							BusinessType: uint32(businessType),
-							ImageBizType: ImageBizType(extra.ExtBizInfo.Pic.BizType),
+							ImageBizType: bizType,
 						})
 					}
 				case nt.BusinessGroupAudio, nt.BusinessFriendAudio:
