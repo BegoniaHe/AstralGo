@@ -539,398 +539,118 @@ func decodeOlPushServicePacket(c *QQClient, pkt *network.Packet) (any, error) {
 				Time:        b.Data.State.Duration,
 			})
 			log.Debugf("0x2DC: subType: %d, passed", subType)
-		case 0x21: // 入群事件 (see troopAddMemberBroadcastDecoder)
-			b := ntMsg.GroupChange{}
-			err = proto.Unmarshal(pkg.Body.MsgContent, &b)
-			groupJoinLock.Lock()
-			defer groupJoinLock.Unlock()
-			groupId := b.GroupUin
-			group := c.FindGroupByUin(int64(groupId))
-			uin := c.GetUINByUID(b.MemberUid)
-			if uin == c.Uin {
-				if group == nil {
-					groupInfo, e := c.ReloadGroup(int64(groupId))
-					if e == nil {
-						c.GroupJoinEvent.dispatch(c, groupInfo)
-					} else {
-						log.Errorf("Cannot Found Joined GroupId: %v", groupId)
-					}
-				}
-			} else {
-				if group != nil && group.FindMember(uin) == nil {
-					log.Debugf("收到入群事件，且群成员不存在，在更新该群成员数据时，主动式触发入群事件，GroupId：%v, Uin：%v", group.Code, uin)
-					mem, e := c.GetMemberInfo(group.Code, uin)
-					if e == nil {
-						group.Update(func(info *GroupInfo) {
-							info.Members = append(info.Members, mem)
-							info.sort()
-						})
-						c.GroupMemberJoinEvent.dispatch(c, &MemberJoinGroupEvent{
-							Group:  group,
-							Member: mem,
-						})
-					} else {
-						c.debug("failed to fetch new member info: %v", err)
-					}
-				}
-			}
-		case 0x22: // 离群事件( TODO : 群解散等，都有，但是需要进一步发包 OidbSvcTrpcTcp.0x10c0_1 才能得知
-			groupLeaveLock.Lock()
-			defer groupLeaveLock.Unlock()
-			b := ntMsg.GroupChange{}
-			err = proto.Unmarshal(pkg.Body.MsgContent, &b)
-			if b.DecreaseType == 3 && b.Operator != nil {
-				Operator := ntMsg.OperatorInfo{}
-				err = proto.Unmarshal(b.Operator, &Operator)
-				if err != nil {
-					return nil, err
-				}
-				b.Operator = utils.S2B(Operator.OperatorField1.OperatorUid)
-			}
-			var g *GroupInfo
-			groupId := (int64)(b.GroupUin)
-			group := c.FindGroupByUin(groupId)
-			if group == nil {
-				g, err = c.ReloadGroup(groupId)
-				if err != nil {
-					log.Errorf("Cannot Found OnlinePush GroupId: %v, type: %v, body: %s", groupId, typ, hex.EncodeToString(pkt.Payload))
-				}
-			}
-			if g == nil {
-				break
-			}
-			uin := c.GetUINByUID(b.MemberUid)
-			var op *GroupMemberInfo
-			if len(b.Operator) > 0 {
-				op = g.FindMember(c.GetUINByUID(string(b.Operator)))
-			}
-			if uin == c.Uin {
-				c.GroupLeaveEvent.dispatch(c, &GroupLeaveEvent{
-					Group:    g,
-					Operator: op,
-				})
-			} else if m := g.FindMember(uin); m != nil {
-				g.removeMember(uin)
-				c.GroupMemberLeaveEvent.dispatch(c, &MemberLeaveGroupEvent{
-					Group:    g,
-					Member:   m,
-					Operator: op,
-				})
-			}
-		case 0x2C: // 群权限变动
-			pb := ntMsg.GroupAdmin{}
-			err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-			if err != nil {
-				return nil, err
-			}
-			var uin int64
-			newPermission := Member
-			if pb.Body.ExtraDisable != nil {
-				uin = c.GetUINByUID(pb.Body.ExtraDisable.AdminUid)
-			} else if pb.Body.ExtraEnable != nil {
-				newPermission = Administrator
-				uin = c.GetUINByUID(pb.Body.ExtraEnable.AdminUid)
-			}
-			if g := c.FindGroupByUin(int64(pb.GroupUin)); g != nil {
-				mem := g.FindMember(uin)
-				if mem.Permission != newPermission {
-					old := mem.Permission
-					mem.Permission = newPermission
-					c.GroupMemberPermissionChangedEvent.dispatch(c, &MemberPermissionChangedEvent{
-						Group:         g,
-						Member:        mem,
-						OldPermission: old,
-						NewPermission: newPermission,
-					})
-				}
-			}
 		default:
 			c.debug("unknown online push 0x2DC sub type 0x%v", strconv.FormatInt(int64(subType), 16))
 		}
 		return nil, nil
-		/*
-			case 33: // member increase
-				pb := message.GroupChange{}
-				err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-				if err != nil {
-					return nil, err
-				}
-				ev := eventConverter.ParseMemberIncreaseEvent(&pb)
-				_ = c.ResolveUin(ev)
-				if ev.UserUin == c.Uin { // bot 进群
-					_ = c.RefreshAllGroupsInfo()
-					c.GroupJoinEvent.dispatch(c, ev)
+	case 0x21: // 入群事件 (see troopAddMemberBroadcastDecoder)
+		b := ntMsg.GroupChange{}
+		err = proto.Unmarshal(pkg.Body.MsgContent, &b)
+		groupJoinLock.Lock()
+		defer groupJoinLock.Unlock()
+		groupId := b.GroupUin
+		group := c.FindGroupByUin(int64(groupId))
+		uin := c.GetUINByUID(b.MemberUid)
+		if uin == c.Uin {
+			if group == nil {
+				groupInfo, e := c.ReloadGroup(int64(groupId))
+				if e == nil {
+					c.GroupJoinEvent.dispatch(c, groupInfo)
 				} else {
-					_ = c.RefreshGroupMemberCache(ev.GroupUin, ev.UserUin)
-					c.GroupMemberJoinEvent.dispatch(c, ev)
+					log.Errorf("Cannot Found Joined GroupId: %v", groupId)
 				}
-				return nil, nil
-			case 34: // member decrease
-				pb := message.GroupChange{}
-				err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-				if err != nil {
-					return nil, err
-				}
-				// 3 是bot自身被踢出，Operator字段会是一个protobuf
-				if pb.DecreaseType == 3 && pb.Operator != nil {
-					Operator := message.OperatorInfo{}
-					err = proto.Unmarshal(pb.Operator, &Operator)
-					if err != nil {
-						return nil, err
-					}
-					pb.Operator = utils.S2B(Operator.OperatorField1.OperatorUid)
-				}
-				ev := eventConverter.ParseMemberDecreaseEvent(&pb)
-				_ = c.ResolveUin(ev)
-				if ev.UserUin == c.Uin {
-					c.GroupLeaveEvent.dispatch(c, ev)
+			}
+		} else {
+			if group != nil && group.FindMember(uin) == nil {
+				log.Debugf("收到入群事件，且群成员不存在，在更新该群成员数据时，主动式触发入群事件，GroupId：%v, Uin：%v", group.Code, uin)
+				mem, e := c.GetMemberInfo(group.Code, uin)
+				if e == nil {
+					group.Update(func(info *GroupInfo) {
+						info.Members = append(info.Members, mem)
+						info.sort()
+					})
+					c.GroupMemberJoinEvent.dispatch(c, &MemberJoinGroupEvent{
+						Group:  group,
+						Member: mem,
+					})
 				} else {
-					c.GroupMemberLeaveEvent.dispatch(c, ev)
+					c.debug("failed to fetch new member info: %v", err)
 				}
-				return nil, nil
-			case 44: // group admin changed
-				pb := message.GroupAdmin{}
-				err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-				if err != nil {
-					return nil, err
-				}
-				ev := eventConverter.ParseGroupMemberPermissionChanged(&pb)
-				_ = c.ResolveUin(ev)
-				_ = c.RefreshGroupMemberCache(ev.GroupUin, ev.UserUin)
-				c.GroupMemberPermissionChangedEvent.dispatch(c, ev)
-			case 84: // group request join notice
-				pb := message.GroupJoin{}
-				err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-				if err != nil {
-					return nil, err
-				}
-				ev := eventConverter.ParseRequestJoinNotice(&pb)
-				_ = c.ResolveUin(ev)
-				user, _ := c.FetchUserInfo(ev.UserUID)
-				if user != nil {
-					ev.UserUin = user.Uin
-					ev.TargetNick = user.Nickname
-				}
-				commonRequests, reqErr := c.GetGroupSystemMessages(false, 20, ev.GroupUin)
-				filteredRequests, freqErr := c.GetGroupSystemMessages(true, 20, ev.GroupUin)
-				if reqErr == nil && freqErr == nil {
-					for _, request := range append(commonRequests.JoinRequests, filteredRequests.JoinRequests...) {
-						if request.TargetUID == ev.UserUID && !request.Checked {
-							ev.RequestSeq = request.Sequence
-							ev.Answer = request.Comment
-						}
-					}
-				}
-				c.GroupMemberJoinRequestEvent.dispatch(c, ev)
-				return nil, nil
-			case 525: // group request invitation notice
-				pb := message.GroupInvitation{}
-				err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-				if err != nil {
-					return nil, err
-				}
-				if pb.Cmd != 87 {
-					return nil, nil
-				}
-				ev := eventConverter.ParseRequestInvitationNotice(&pb)
-				_ = c.ResolveUin(ev)
-				user, _ := c.FetchUserInfo(ev.UserUID)
-				if user != nil {
-					ev.UserUin = user.Uin
-					ev.TargetNick = user.Nickname
-				}
-				c.GroupMemberJoinRequestEvent.dispatch(c, ev)
-				return nil, nil
-			case 87: // group invite notice
-				pb := message.GroupInvite{}
-				err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-				if err != nil {
-					return nil, err
-				}
-				ev := eventConverter.ParseInviteNotice(&pb)
-				group, err := c.FetchGroupInfo(ev.GroupUin, true)
-				if err == nil {
-					ev.GroupName = group.GroupName
-				}
-				_ = c.ResolveUin(ev)
-				user, _ := c.FetchUserInfo(ev.InvitorUID)
-				if user != nil {
-					ev.InvitorUin = user.Uin
-					ev.InvitorNick = user.Nickname
-				}
-				commonRequests, reqErr := c.GetGroupSystemMessages(false, 20, ev.GroupUin)
-				filteredRequests, freqErr := c.GetGroupSystemMessages(true, 20, ev.GroupUin)
-				if reqErr == nil && freqErr == nil {
-					for _, request := range append(commonRequests.InvitedRequests, filteredRequests.InvitedRequests...) {
-						if !request.Checked {
-							ev.RequestSeq = request.Sequence
-							break
-						}
-					}
-				}
-				c.GroupInvitedEvent.dispatch(c, ev)
-				return nil, nil
-			case 0x210: // friend event, 528
-				subType := pkg.ContentHead.SubType.Unwrap()
-				switch subType {
-				case 35: // friend request notice
-					pb := message.FriendRequest{}
-					err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-					if err != nil {
-						return nil, err
-					}
-					if pb.Info == nil {
-						break
-					}
-					ev := eventConverter.ParseFriendRequestNotice(&pb)
-					user, _ := c.FetchUserInfo(ev.SourceUID)
-					if user != nil {
-						ev.SourceUin = user.Uin
-						ev.SourceNick = user.Nickname
-					}
-					c.NewFriendRequestEvent.dispatch(c, ev)
-					return nil, nil
-				case 138: // friend recall
-					pb := message.FriendRecall{}
-					err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-					if err != nil {
-						return nil, err
-					}
-					ev := eventConverter.ParseFriendRecallEvent(&pb)
-					_ = c.ResolveUin(ev)
-					c.FriendRecallEvent.dispatch(c, ev)
-					return nil, nil
-				case 39: // friend rename
-					pb := message.FriendRenameMsg{}
-					err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-					if err != nil {
-						return nil, err
-					}
-					if pb.Body.Field2 == 20 { // friend name update
-						ev := eventConverter.ParseFriendRenameEvent(&pb)
-						_ = c.ResolveUin(ev)
-						c.RenameEvent.dispatch(c, ev)
-					} // 40 grp name
-					return nil, nil
-				case 29:
-					pb := message.SelfRenameMsg{}
-					err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-					if err != nil {
-						return nil, err
-					}
-					c.RenameEvent.dispatch(c, eventConverter.ParseSelfRenameEvent(&pb, &c.transport.Sig))
-					return nil, nil
-				case 290: // greyTip
-					pb := message.GeneralGrayTipInfo{}
-					err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-					if err != nil {
-						return nil, err
-					}
-					if pb.BusiType == 12 {
-						c.FriendNotifyEvent.dispatch(c, eventConverter.ParsePokeEvent(&pb))
-					}
-				case 226: // 好友验证消息，申请，同意都有
-				case 179: // new friend 主动加好友且对方同意
-					pb := message.NewFriend{}
-					err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-					if err != nil {
-						return nil, err
-					}
-					ev := eventConverter.ParseNewFriendEvent(&pb)
-					_ = c.ResolveUin(ev)
-					c.NewFriendEvent.dispatch(c, ev)
-				default:
-					c.debug("unknown subtype %d of type 0x210, proto data: %x", subType, pkg.Body.MsgContent)
-				}
-			case 0x2DC: // grp event, 732
-				subType := pkg.ContentHead.SubType.Unwrap()
-				switch subType {
-				case 21: // set essence
-					reader := binary.NewReader(pkg.Body.MsgContent)
-					_ = reader.ReadU32() // group uin
-					reader.SkipBytes(1)  // unknown byte
-					pb := message.NotifyMessageBody{}
-					err = proto.Unmarshal(reader.ReadBytesWithLength("u16", false), &pb)
-					if err != nil {
-						return nil, err
-					}
-					c.GroupDigestEvent.dispatch(c, eventConverter.ParseGroupDigestEvent(&pb))
-					return nil, nil
-				case 20: // group greyTip
-					reader := binary.NewReader(pkg.Body.MsgContent)
-					groupUin := reader.ReadU32() // group uin
-					reader.SkipBytes(1)          // unknown byte
-					pb := message.NotifyMessageBody{}
-					err = proto.Unmarshal(reader.ReadBytesWithLength("u16", false), &pb)
-					if err != nil {
-						return nil, err
-					}
-					if pb.GrayTipInfo.BusiType == 12 { // poke
-						c.GroupNotifyEvent.dispatch(c, eventConverter.ParseGroupPokeEvent(&pb, groupUin))
-					}
-					return nil, nil
-				case 17: // recall
-					reader := binary.NewReader(pkg.Body.MsgContent)
-					_ = reader.ReadU32() // group uin
-					_ = reader.ReadU8()  // reserve
-					pb := message.NotifyMessageBody{}
-					err = proto.Unmarshal(reader.ReadBytesWithLength("u16", false), &pb)
-					if err != nil {
-						return nil, err
-					}
-					ev := eventConverter.ParseGroupRecallEvent(&pb)
-					_ = c.ResolveUin(ev)
-					c.GroupRecallEvent.dispatch(c, ev)
-					return nil, nil
-				case 16: // group name update & member special title update & group reaction
-					reader := binary.NewReader(pkg.Body.MsgContent)
-					groupUin := reader.ReadU32()
-					reader.SkipBytes(1)
-					pb := message.NotifyMessageBody{}
-					err = proto.Unmarshal(reader.ReadBytesWithLength("u16", false), &pb)
-					if err != nil {
-						return nil, err
-					}
-					switch pb.Field13 {
-					case 6: // GroupMemberSpecialTitle
-						epb := message.GroupSpecialTitle{}
-						err := proto.Unmarshal(pb.EventParam, &epb)
-						if err != nil {
-							return nil, err
-						}
-						c.MemberSpecialTitleUpdatedEvent.dispatch(c, eventConverter.ParseGroupMemberSpecialTitleUpdatedEvent(&epb, groupUin))
-					case 12: // group name update
-						r := binary.NewReader(pb.EventParam)
-						r.SkipBytes(3)
-						ev := eventConverter.ParseGroupNameUpdatedEvent(&pb, string(r.ReadBytesWithLength("u8", false)))
-						_ = c.ResolveUin(ev)
-						c.GroupNameUpdatedEvent.dispatch(c, ev)
-					case 35: // group reaction
-						r := binary.NewReader(pkg.Body.MsgContent)
-						r.ReadU32()
-						r.ReadBytes(1)
-						rpb := message.GroupReaction{}
-						err := proto.Unmarshal(r.ReadBytesWithLength("u16", false), &rpb)
-						if err != nil {
-							return nil, err
-						}
-						ev := eventConverter.ParseGroupReactionEvent(&rpb)
-						_ = c.ResolveUin(ev)
-						c.GroupReactionEvent.dispatch(c, ev)
-					}
-				case 12: // mute
-					pb := message.GroupMute{}
-					err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
-					if err != nil {
-						return nil, err
-					}
-					ev := eventConverter.ParseGroupMuteEvent(&pb)
-					_ = c.ResolveUin(ev)
-					c.GroupMuteEvent.dispatch(c, ev)
-					return nil, nil
-				default:
-					c.debug("Unsupported group event, subType: %v, proto data: %x", subType, pkg.Body.MsgContent)
-				}*/
+			}
+		}
+	case 0x22: // 离群事件( TODO : 群解散等，都有，但是需要进一步发包 OidbSvcTrpcTcp.0x10c0_1 才能得知
+		groupLeaveLock.Lock()
+		defer groupLeaveLock.Unlock()
+		b := ntMsg.GroupChange{}
+		err = proto.Unmarshal(pkg.Body.MsgContent, &b)
+		if b.DecreaseType == 3 && b.Operator != nil {
+			Operator := ntMsg.OperatorInfo{}
+			err = proto.Unmarshal(b.Operator, &Operator)
+			if err != nil {
+				return nil, err
+			}
+			b.Operator = utils.S2B(Operator.OperatorField1.OperatorUid)
+		}
+		var g *GroupInfo
+		groupId := (int64)(b.GroupUin)
+		group := c.FindGroupByUin(groupId)
+		if group == nil {
+			g, err = c.ReloadGroup(groupId)
+			if err != nil {
+				log.Errorf("Cannot Found OnlinePush GroupId: %v, type: %v, body: %s", groupId, typ, hex.EncodeToString(pkt.Payload))
+			}
+		}
+		if g == nil {
+			break
+		}
+		uin := c.GetUINByUID(b.MemberUid)
+		var op *GroupMemberInfo
+		if len(b.Operator) > 0 {
+			op = g.FindMember(c.GetUINByUID(string(b.Operator)))
+		}
+		if uin == c.Uin {
+			c.GroupLeaveEvent.dispatch(c, &GroupLeaveEvent{
+				Group:    g,
+				Operator: op,
+			})
+		} else if m := g.FindMember(uin); m != nil {
+			g.removeMember(uin)
+			c.GroupMemberLeaveEvent.dispatch(c, &MemberLeaveGroupEvent{
+				Group:    g,
+				Member:   m,
+				Operator: op,
+			})
+		}
+	case 0x2C: // 群权限变动
+		pb := ntMsg.GroupAdmin{}
+		err = proto.Unmarshal(pkg.Body.MsgContent, &pb)
+		if err != nil {
+			return nil, err
+		}
+		var uin int64
+		newPermission := Member
+		if pb.Body.ExtraDisable != nil {
+			uin = c.GetUINByUID(pb.Body.ExtraDisable.AdminUid)
+		} else if pb.Body.ExtraEnable != nil {
+			newPermission = Administrator
+			uin = c.GetUINByUID(pb.Body.ExtraEnable.AdminUid)
+		}
+		if g := c.FindGroupByUin(int64(pb.GroupUin)); g != nil {
+			mem := g.FindMember(uin)
+			if mem.Permission != newPermission {
+				old := mem.Permission
+				mem.Permission = newPermission
+				c.GroupMemberPermissionChangedEvent.dispatch(c, &MemberPermissionChangedEvent{
+					Group:         g,
+					Member:        mem,
+					OldPermission: old,
+					NewPermission: newPermission,
+				})
+			}
+		}
+	case 84: // group request join notice
+	case 525: // group request invitation notice
+	case 87: // group invite notice
 	default:
 		c.debug("Unsupported message type: %v, proto data: %x", typ, pkg.Body.MsgContent)
 	}
